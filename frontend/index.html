@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Countdown • Radial Wave</title>
+<style>
+  :root{
+    --bg:#000;
+    --panel-bg: rgba(8,10,12,0.6);
+    --accent1: #7cc6ff;
+    --accent2: #a8ffcc;
+    --muted:#9fb3c8;
+  }
+  html,body{height:100%;margin:0;background:var(--bg);font-family:Inter,system-ui,Arial;color:#fff;overflow:hidden}
+  #bgvideo{position:fixed;inset:0;width:100%;height:100%;object-fit:cover;filter:brightness(.35);z-index:0;display:none}
+  canvas#wave{position:fixed;inset:0;z-index:1;pointer-events:none}
+  .center{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);z-index:2;display:flex;align-items:center;justify-content:center}
+  .card{width:min(78vw,880px);padding:22px 28px;border-radius:14px;background:linear-gradient(180deg, rgba(255,255,255,0.03), rgba(255,255,255,0.02));backdrop-filter: blur(8px);box-shadow:0 10px 40px rgba(0,0,0,.6);display:flex;align-items:center;gap:24px}
+  .logo{width:64px;height:64px;border-radius:50%;background:linear-gradient(135deg,var(--accent1),var(--accent2));display:flex;align-items:center;justify-content:center;font-weight:800;color:#001}
+  .boxes{display:flex;gap:14px;align-items:center}
+  .box{min-width:140px;padding:14px 18px;background:rgba(0,0,0,0.35);border-radius:8px;text-align:center;backdrop-filter: blur(4px);border:1px solid rgba(255,255,255,0.04)}
+  .num{font-weight:900;font-size:34px;letter-spacing:0.6px}
+  .lbl{font-size:12px;color:var(--muted);margin-top:6px;text-transform:uppercase;letter-spacing:1px}
+  .subtitle{position:absolute;left:50%;top:calc(50% + 120px);transform:translateX(-50%);color:var(--muted);font-size:13px;z-index:2}
+  @media (max-width:700px){ .card{width:92vw;flex-direction:column} .boxes{flex-wrap:wrap;justify-content:center} }
+</style>
+</head>
+<body>
+  <video id="bgvideo" autoplay loop muted playsinline></video>
+  <canvas id="wave"></canvas>
+
+  <div class="center">
+    <div class="card">
+      <div class="logo">E</div>
+      <div>
+        <div style="font-size:13px;color:var(--muted);text-transform:uppercase;letter-spacing:1px">
+          Countdown to <span id="year" style="color:var(--accent1);font-weight:800"></span> • IST
+        </div>
+        <div class="boxes" style="margin-top:12px">
+          <div class="box"><div class="num" id="d">00</div><div class="lbl">Days</div></div>
+          <div class="box"><div class="num" id="h">00</div><div class="lbl">Hours</div></div>
+          <div class="box"><div class="num" id="m">00</div><div class="lbl">Minutes</div></div>
+          <div class="box"><div class="num" id="s">00</div><div class="lbl">Seconds</div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="subtitle" id="subtitle">Streaming • Drive audio</div>
+
+  <audio id="audio" crossorigin="anonymous"></audio>
+
+<script>
+(async function(){
+  const Q = new URLSearchParams(location.search);
+  const DRIVE_AUDIO = Q.get('drive_audio') || Q.get('drive') || '';
+  const DRIVE_BG = Q.get('drive_bg') || '';
+  const MUTE = Q.get('mute') === '1';
+
+  // IST target
+  const TZ_MIN = 330;
+  function nowIST(){ const local = new Date().getTimezoneOffset(); const delta = TZ_MIN - (-local); return new Date(Date.now() + delta*60000); }
+  const now = nowIST();
+  const tyear = now.getMonth()===0 && now.getDate()===1 && now.getHours()===0 ? now.getFullYear() : now.getFullYear()+1;
+  document.getElementById('year').textContent = tyear;
+  const target = new Date(tyear,0,1,0,0,0,0);
+
+  function pad(n){return String(n).padStart(2,'0');}
+  function tick(){
+    const t = nowIST();
+    let diff = target - t; if(diff<0) diff=0;
+    const sec = Math.floor(diff/1000);
+    const days = Math.floor(sec/86400);
+    const hrs  = Math.floor((sec%86400)/3600);
+    const mins = Math.floor((sec%3600)/60);
+    const secs = sec%60;
+    document.getElementById('d').textContent = pad(days);
+    document.getElementById('h').textContent = pad(hrs);
+    document.getElementById('m').textContent = pad(mins);
+    document.getElementById('s').textContent = pad(secs);
+  }
+  setInterval(tick,250); tick();
+
+  // background video
+  const bgVideoEl = document.getElementById('bgvideo');
+  if (DRIVE_BG) {
+    const bgUrl = `https://drive.google.com/uc?export=download&id=${DRIVE_BG}`;
+    bgVideoEl.src = bgUrl;
+    bgVideoEl.style.display = 'block';
+    bgVideoEl.play().catch(()=>{});
+    document.getElementById('subtitle').textContent = 'Streaming • Background: Drive video';
+  }
+
+  // audio setup
+  const audioEl = document.getElementById('audio');
+  if (DRIVE_AUDIO) {
+    const audioUrl = `https://drive.google.com/uc?export=download&id=${DRIVE_AUDIO}`;
+    audioEl.src = audioUrl;
+    audioEl.loop = true;
+    audioEl.muted = MUTE;
+    audioEl.volume = 0.8;
+    try { await audioEl.play(); } catch(e) {}
+  } else {
+    document.getElementById('subtitle').textContent = 'Streaming • No audio set';
+  }
+
+  // radial waveform canvas
+  const canvas = document.getElementById('wave');
+  const ctx = canvas.getContext('2d');
+  function resize(){ canvas.width = innerWidth; canvas.height = innerHeight; }
+  addEventListener('resize', resize); resize();
+
+  // WebAudio analyser
+  let audioCtx, analyser, data;
+  try {
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    analyser = audioCtx.createAnalyser();
+    analyser.fftSize = 2048;
+    data = new Uint8Array(analyser.frequencyBinCount);
+    const source = audioCtx.createMediaElementSource(audioEl);
+    source.connect(analyser);
+    if (!MUTE) source.connect(audioCtx.destination);
+  } catch(e) {
+    console.warn('AudioContext not available', e);
+  }
+
+  function draw() {
+    requestAnimationFrame(draw);
+    ctx.clearRect(0,0,canvas.width,canvas.height);
+
+    // subtle radial glow
+    const g = ctx.createRadialGradient(canvas.width/2, canvas.height/2, 100, canvas.width/2, canvas.height/2, Math.max(canvas.width, canvas.height)/1.5);
+    g.addColorStop(0, 'rgba(124,198,255,0.06)');
+    g.addColorStop(1, 'rgba(0,0,0,0.0)');
+    ctx.fillStyle = g; ctx.fillRect(0,0,canvas.width,canvas.height);
+
+    if (!analyser) return;
+    analyser.getByteFrequencyData(data);
+
+    const cx = canvas.width/2;
+    const cy = canvas.height/2;
+    const baseRadius = Math.min(canvas.width, canvas.height) * 0.22;
+
+    // multi-layer rings
+    const rings = 5;
+    for (let r=0; r<rings; r++) {
+      ctx.beginPath();
+      const radius = baseRadius + r*12;
+      for (let i=0;i<360;i+=2) {
+        const idx = Math.floor(i/360 * data.length);
+        const amp = data[idx] / 255;
+        const theta = (i-90) * Math.PI/180;
+        const offset = amp * (12 + r*6);
+        const x = cx + Math.cos(theta) * (radius + offset);
+        const y = cy + Math.sin(theta) * (radius + offset);
+        if (i===0) ctx.moveTo(x,y); else ctx.lineTo(x,y);
+      }
+      ctx.closePath();
+      const alpha = 0.12 + (r*0.06);
+      ctx.fillStyle = `rgba(124,198,255,${alpha})`;
+      ctx.fill();
+      ctx.strokeStyle = `rgba(168,255,204,${0.12 + r*0.03})`;
+      ctx.lineWidth = 1 + r*0.5;
+      ctx.stroke();
+    }
+
+    // outer ticks
+    const ticks = 60;
+    for (let i=0;i<ticks;i++){
+      const a = i / ticks * Math.PI*2 - Math.PI/2;
+      const idx = Math.floor(i / ticks * data.length);
+      const val = data[idx] / 255;
+      const inner = baseRadius + rings*12 + 8;
+      const outer = inner + 8 + val*18;
+      const x1 = cx + Math.cos(a)*inner;
+      const y1 = cy + Math.sin(a)*inner;
+      const x2 = cx + Math.cos(a)*outer;
+      const y2 = cy + Math.sin(a)*outer;
+      ctx.beginPath();
+      ctx.moveTo(x1,y1); ctx.lineTo(x2,y2);
+      ctx.strokeStyle = 'rgba(124,198,255,0.55)';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+    }
+  }
+  draw();
+
+})();
+</script>
+</body>
+</html>
